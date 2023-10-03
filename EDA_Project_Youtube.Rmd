@@ -1,0 +1,1014 @@
+---
+title: "CITS4009 Project 1 - Exploratory Data Analysis"
+author: "Fanchao(Franco) MENG - 23370209"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+<br>
+**My shiny App : https://www.youtube.com/watch?v=k9l2WqSfrn0&ab_channel=FrancoM**
+<br>
+<br>
+
+### **Abstract**
+
+YouTube, an American company, found by Steve Chen, Chad Hurley and Jawed Karim on February 14, 2005. Has now become the most successful online video sharing platform.
+
+This report uses "Global YouTube Statistics 2023" dataset : (https://www.kaggle.com/datasets/nelgiriyewithana/global-youtube-statistics-2023), obtained from Kaggle, collected by Nidula Elgiriyewithana.
+
+The dataset has included top 995 Youtubers, based on, and ordered by the number of their subscribers. 
+
+<br>
+
+### **1. Data Extraction, Exploration, Cleaning, Transformation**
+<br>
+
+#### **1.1  Installing Packages, loading libraries.**
+<br>
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r echo=TRUE}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(kableExtra)
+library(knitr)
+library(pander)
+library(psych)
+library(gridExtra)
+library(RColorBrewer)
+library(countrycode)
+library(vtreat)
+library(hexbin)
+library(wesanderson)
+library(corrplot)
+```
+<br>
+
+
+#### **1.2  Data import, duplicates review.**
+<br>
+
+```{r}
+raw_data <- read.csv("youtube_UTF_8.csv",stringsAsFactors = TRUE)
+#str(raw_data)
+#summary(raw_data)
+
+nrow(raw_data) == nrow(unique(raw_data))
+```
+
+Above code has successfully read in the raw data, and also checked there was no duplicate rows in our dataset.
+
+<br>
+
+#### **1.3  Columns, data type review.** 
+<br>
+
+Firstly, I'd like to check what columns we have in the data,and how many of them. 
+
+Which columns are numeric and which ones are not? In order to have an initial understanding of the data.
+
+**Function: "column_type"** was written, to return a summary in html table style.**_(table A)_**
+
+```{r warning=FALSE}
+# a function to return all numeric columns, as well as non numeric columns.
+
+column_type <- function(dataframe) {
+  numeric_cols <- colnames(dataframe[,unlist(lapply(dataframe, is.numeric))])
+  
+  # above can be sapply(dataframe, is.numeric) or which(sapply(dataframe, is.numeric))
+  
+  non_numeric_cols <- colnames(dataframe[,unlist(lapply(dataframe, negate(is.numeric)))])
+  result <- c(paste0(numeric_cols, collapse =",\n"),paste0(non_numeric_cols,collapse=","))
+  result_df <- data.frame ( Column_Names = result,  row.names = c("numeric_columns", "non_numeric_columns"), count = c(length(numeric_cols), length(non_numeric_cols)))
+  return (result_df)
+}
+
+output_1 <- column_type(raw_data) 
+
+kable(output_1,  booktabs = TRUE, longtable = F, caption = "**Table A: Column Summary**") %>%
+  kable_styling(font_size = 12)%>%
+  kable_styling(bootstrap_options = "bordered")
+
+```
+<br>
+
+#### **1.4  NA and detail reviews of each columns.**
+
+<br>
+
+Another table has been created as below **_(Table B)_**, to show all the detail stats of each column. regarding :
+
+- Count of NA
+- Count of Valid values
+- Mean
+- Standard Deviation
+- Median
+- Min
+- Max
+- Range
+
+<br>
+
+
+Number Presentation :
+
+- formatted with thousands separator ",", for better readability. 
+
+<br>
+
+It is interesting to notice that , column **"created_year"** and **"created_date"** both have 5 missing values. It might be the case that there are 5 rows missing these information simultaneously ?
+
+I will explore these a bit later on.
+
+```{r}
+
+overall_summary <- describe(raw_data)
+overall_summary <- overall_summary[, c(-1,-ncol(overall_summary))]
+
+na_summary <- data.frame(NA_count = colSums(is.na(raw_data)))
+
+
+na_summary$id <- 1:nrow(na_summary)
+
+final_summary <- merge(na_summary, overall_summary,  by = "row.names" , all = TRUE)
+final_summary <- final_summary[order(final_summary$id),]
+rownames(final_summary) <- NULL
+
+
+x = kbl(final_summary[1:28,c(-3,-8,-9,-13,-14)],longtable = F, booktabs = TRUE,  digits = 0,format.args = list(big.mark = ","),caption = "**Table B: Column Details and Stats Summary**  ") %>% 
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = c( "hold_position","striped","scale_down"),font_size = 12)%>%
+  row_spec(0,background="#EBCC2A")%>%
+  row_spec(c(2,5,6,8,9,10,21), background = "#78B7C5")%>%
+  row_spec(c(1,3,4,7,11,12,13,14,15,16,17,18,19,20,22), background = "#74A089")%>%
+  row_spec(c(23:28), background = "lightgrey") %>%
+  scroll_box(width = "100%", height = "400px")
+x
+```
+<br>
+**The rows are color coded as below:** 
+
+- **<span style="color: #78B7C5;">Blue  - Non-Numeric Columns</span>**
+
+- **<span style="color: #74A089;">Green - Numeric Columns</span>**
+
+- **<span style="color: #5C5C5C;">Grey  - Columns with descriptive information of country, not YouTubers.</span>**
+
+<br>
+
+
+
+<br>
+
+#### **1.5 Non Numeric Columns Review.**
+
+<br>
+Non numeric values plays important role in EDA, usually these information can be used to group the data, into different categories, classes.
+
+Result **_(Table C.1)_** has been produced below, the "Title" and "Youtuber" columns have been omitted. 
+
+From the result, we can clearly see the **word "nan"** exists in many columns, as a text string, which need to be dealt with.
+
+```{r}
+non_numeric_df <- raw_data[,unlist(lapply(raw_data, negate(is.numeric)))]
+no_levels <- data.frame(No.of_unique_values = unlist(lapply(non_numeric_df,nlevels)))
+
+unique_value_1 <- lapply(non_numeric_df,levels)
+unique_value_2 <- lapply(unique_value_1,paste0,collapse = ",\n")
+unique_value_3 <- unlist(unique_value_2)
+unique_value_2[c(1,3)] <- "*not listed here"
+unique_value_3 <- data.frame(unique_values = unlist(unique_value_2))
+
+non_numeric_summary <- merge(no_levels, unique_value_3,  by = "row.names" , all = TRUE)
+
+kable(non_numeric_summary,  booktabs = TRUE, longtable = F, caption = "**Table C.1: Non Numeric Column Summary**") %>%
+  kable_styling(font_size = 12)%>%
+  kable_styling(bootstrap_options = "bordered")
+
+
+```
+
+<br>
+
+Below code will converte all **"nan"** strings into **"unknown"**, to make it more explicit. 
+The **_(Table C.2)_** been displayed again to examine the data cleaning result.
+
+**Function "my_file_reader"** was created, in order to :
+
+- import, load the data
+
+- transform text string **"nan"** to **"unknwon"**
+
+```{r}
+raw_data <- read.csv("youtube_UTF_8.csv",stringsAsFactors = FALSE)
+
+
+my_file_reader <- function(filename, search = "nan", replace_to = "Unknown") {
+  df <- read.csv(filename,stringsAsFactors = FALSE)
+  df <- df %>% mutate_if (is.character, function(x) gsub(pattern = search, replace_to, x))
+  df[sapply(df, is.character)] <- lapply(df[sapply(df, is.character)], 
+                                       as.factor)
+  return (df)
+ 
+}
+
+new_df <- my_file_reader ("youtube_UTF_8.csv")
+non_numeric_df <- new_df[,unlist(lapply(new_df, negate(is.numeric)))]
+no_levels <- data.frame(No._of_unique_values = unlist(lapply(non_numeric_df,nlevels)))
+unique_value_1 <- lapply(non_numeric_df,levels)
+unique_value_2 <- lapply(unique_value_1,paste0,collapse = ",\n")
+unique_value_3 <- unlist(unique_value_2)
+unique_value_2[c(1,3)] <- "*not listed here"
+unique_value_3 <- data.frame(unique_values = unlist(unique_value_2))
+non_numeric_summary <- merge(no_levels, unique_value_3,  by = "row.names" , all = TRUE) 
+
+kable(non_numeric_summary,  booktabs = TRUE, longtable = F, caption = "**Table C.2: Updated Non Numeric Column Summary - 'Nan' to 'Unknown'**") %>%
+  kable_styling(font_size = 12)%>%
+  kable_styling(bootstrap_options = "bordered")
+
+```
+
+<br>
+
+#### **1.6 Further exploration on the rows with missing values.**
+
+<br>
+
+As mention above in section **1.4**, I'd like to explore those 5 missing values in **"created_date"** and **"created_year"**, to see if they belongs to the same row.
+
+Below code returns these five rows **_(Table D)_**. As we can see clearly, these 5 rows all missing created date, month, year at the same time.
+
+
+```{r}
+unknown_month <- new_df[new_df$created_month == "Unknown",]
+
+unknwon_month_1 <- unknown_month[,c("created_date", "created_month", "created_year")]
+
+kable(unknwon_month_1,  booktabs = TRUE, longtable = F, caption = "**Table D: 5 Rows missing all values in date columns**") %>%
+  kable_styling(font_size = 12)%>%
+  kable_styling(bootstrap_options = "bordered")
+
+```
+
+<br>
+
+In order to decide whether we should disregard these 5 rows. 
+
+**Function: my_na_function** was created below, in orde to:
+
+- calculate the percentage of missing value for each row
+
+- **option argument**: in case the user would like to consider a certain numeric number or text string as missing value for the calculation.
+
+<br>
+
+```{r}
+
+
+#result_1 <-apply(X = (unknown_month == "Unknown"), MARGIN = 1, FUN = sum)
+
+my_na_function <- function(dataframe, digit, string ) {
+  if(missing(digit) & missing(string)) {
+    result <- apply(X = is.na(dataframe), MARGIN = 1, FUN = sum)
+    round (result/ncol(dataframe),2)*100
+  }
+  else if (missing(digit)){
+    result <- apply(X = (is.na(dataframe) | dataframe == string), MARGIN = 1, FUN = sum)
+    round (result/ncol(dataframe),2)*100
+  }
+  else if (missing(string)){
+    result <- apply(X = (is.na(dataframe) | dataframe == digit), MARGIN = 1, FUN = sum)
+    round (result/ncol(dataframe),2)*100
+  }
+  else {
+    result <- apply(X = (is.na(dataframe) | dataframe == digit | dataframe == string), MARGIN = 1, FUN = sum)
+    round (result/ncol(dataframe),2)*100
+  }
+}
+
+
+sprintf("%0.1f%%", my_na_function (unknown_month, 0,"Unknown"))
+
+
+```
+
+<br>
+
+If we consider, Nan, 0, "unknown" as missing values, above function result shows:
+
+- The percentage of "invalid" values in these 5 rows. ranging from 36% to 75%, fairly high, I've then decided to delete these row.
+
+- The dataset contains 995 rows. around **0.5% of impact**. 
+
+<br>
+
+#### **1.7 Data Transformation**
+
+<br>
+
+Below code:
+
+- dropped above mentioned 5 rows, which are missing date, month, year simultaneouly.
+
+- created a new column, which has the combined info from date, month and year. 
+
+- The month column has been converted to **"month number"** from **"month name"**.
+
+- The new column data type has been changed to **"date"**, for easier analytic usage. 
+
+- Three old date related columns are dropped. 
+
+- The redundant level is also dropped. 
+
+<br>
+```{r}
+
+new_df_1 <- new_df[ new_df$created_month != "Unknown",]
+new_df_1 <- droplevels(new_df_1)
+
+
+new_df_2 <- new_df_1 %>% mutate(created_month = recode(created_month,
+  Jan = 1,
+  Feb = 2,
+  Mar = 3,
+  Apr = 4,
+  May = 5,
+  Jun = 6,
+  Jul = 7,
+  Aug = 8,
+  Sep = 9,
+  Oct = 10,
+  Nov = 11,
+  Dec = 12
+))
+
+new_df_2$created_date_1 <- as.Date(with(new_df_2, paste(created_year, created_month, created_date, sep = "-")) , "%Y-%m-%d")
+drops <- c("created_year", "created_month", "created_date")
+new_df_2 <- new_df_2 [, !(names(new_df_2) %in% drops)]
+
+```
+
+<br>
+
+#### **1.8 More issues**
+
+<br>
+
+The data still has lots of remaining issues.
+
+By using the **Function: my_na_function** created above, we can check our whole dataset.
+
+- how many rows in total have no missing values,
+
+- The rows with the most missing values?  
+
+
+```{r message=FALSE, warning=FALSE}
+sum (my_na_function (new_df, 0,"Unknown") == 0)
+
+sprintf("%0.1f%%", sort(my_na_function (new_df, 0,"Unknown"), decreasing = TRUE)[1:10])
+```
+<br>
+
+Above result shows: 
+
+- 542 rows in our dataset DO NOT have any missing values. 
+
+- if I sort all the rows by missing value percentages, in descending order. the results are ranging from 75% to 64%, really high! Means there are at least 10 rows, having more than 64% of missing information, out of 28 column.
+
+<br>
+
+But before I further drop any more rows, let's have a look of our second ranked Youtuber : 
+
+```{r}
+
+new_df[new_df$rank == 2,c("Youtuber","subscribers","video.views","uploads","video_views_for_the_last_30_days")]
+
+```
+
+For the Youtuber shown above, Why the 2nd rank YouTube by number of subscribers, with a staggering 170,000,000 subscribers, has no view views, only 1 uploads, only 12 video_views for the last 30 days. and no subscribers in the last 30 days? 
+
+Is it because the copy right issue, where all videos belongs to (YouTube movies) channel got taken down? and exclude from the public view? or is it simply due to the data missing? and data errors ?
+
+Due to the structure of this **ranked and ordered data**, Is it really safe to drop our 2nd rank YouTube ? 
+
+The data is ordered by "subscribers" count, not from a random sampling from a population.
+Each row of data does not have same "weight", If we take out the 2nd rank YouTube, due to its extremely high number of subscribers, it may heavily impact our analysis result.
+
+I personally can not justify to delete any more rows. Only because the certain NA issues. 
+
+It is worth to take a deeper dive into each row. however for the practice purpose of this project. I've decided to :
+
+- Transforming all 0 to NA
+
+- Use Vtreat Package to fill in NA with computed algorithm .
+
+And again, in the 2nd ranked YouTuber case, the video.view is 0 , it is also not the best practice to use mean, or median of video.view to fill in this missing value, as the real figure most likely would be a lot higher than mean/median.
+
+Below code transforms all 0s into NAN:
+
+```{r}
+
+numeric_col_mask <-unlist(lapply(new_df_2, is.numeric))
+
+new_df_2[,numeric_col_mask][new_df_2[,numeric_col_mask]==0] <- NaN
+         
+
+```
+
+
+
+Below code exams if this has been done successfully.
+
+
+```{r}
+
+na_summary_2 <- data.frame(NA_count = colSums(new_df_2==0))
+na_summary_2 <- filter ( na_summary_2, na_summary_2$NA_count != 0)
+na_summary_2
+
+
+```
+<br>
+
+Very close!! but there is still one single 0 value in our created date column, in the new created date data type column.
+
+<br>
+```{r}
+new_df_2 [ new_df_2$created_date_1 == 0 , "created_date_1"]
+new_df_2 [ new_df_2$created_date_1 == 0,c("Youtuber","subscribers","created_date_1")]
+
+```
+<br>
+
+Above exploration shows:
+
+- row index 102, has the date as 1970-01-01, (which considered as 0 in R).
+
+- The YouTuber name is "YouTube" ?? 
+
+It doesn't make any sense, as this account was created 35 years, prior the launch of YouTube.
+
+Since the Youtuber name is "YouTube", I've decided to assign the Youtube founded date ("2005-02-14" - valentine's day) to this Youtuber. a rather romantic decision.
+
+Result shown in **_(Table E)_** 
+<br>
+
+
+```{r}
+new_df_2 [ new_df_2$created_date_1 == 0 , "created_date_1"] <- "2005-02-14"
+Youtuber_Channel <- new_df_2 [ new_df_2$created_date_1 == "2005-02-14",]
+
+kable(Youtuber_Channel,  booktabs = TRUE, longtable = F, caption = "**Table E: 'YouTuber' with updated created date") %>%
+  kable_styling(font_size = 12)%>%
+  kable_styling(bootstrap_options = "bordered")%>%
+  scroll_box(width = "100%")
+
+```
+
+<br>
+
+#### **1.9 Relacing all missing values with Vtreat Package**
+
+<br>
+
+Now I can safely use the magical vtreat package.
+
+- using treatment,
+
+- remove isbad columns, I understand these information are important, however in this project it probably won't be used,
+
+- round all decimal numeric numbers to integers . 
+
+
+
+
+```{r}
+colname_list <- colnames(new_df_2)
+
+treatment_plan <- design_missingness_treatment(new_df_2, varlist = colname_list)
+
+new_df_3 <- prepare (treatment_plan, new_df_2)
+
+colname_list_1 <- c(colnames(new_df_2),"video_views","Gross_tertiary_education_enrollment_","Unemployment_rate")
+new_df_3 <- new_df_3 [, c(names(new_df_3) %in% colname_list_1)]
+
+
+
+```
+
+
+Finally the data has been cleaned, even though not perfect, but these would make the below EDA analysis a lot easier ! 
+I also gained a deep understanding of the dataset through above process. 
+
+<br>
+<br>
+
+### **2. EDA, Data Visualizations** 
+
+<br>
+<br>
+
+#### **2.1 Since youtube funded in 2005 in US. In these top ranked 990 youtubers by numbers of subscribers. How many of them were originated from America ?**
+
+<br>
+
+```{r message=FALSE, warning=FALSE}
+
+h1 <- new_df_3 %>% count(Country) %>% mutate(Country = reorder(Country, n)) %>% top_n (15) %>% ggplot(aes(x = Country, y = n)) +
+  geom_col(fill = "#045D5D",alpha = 0.9) +
+  labs(title = "No.of YouTubers Vs orginated countries - (Only Top 15 Shown)",caption = "Fig 1") +  theme(legend.position 
+="none",plot.title=element_text(size=12,face="bold"),axis.text.x=element_text(size=8, angle = 20),axis.text.y=element_text(size=8),axis.title=element_blank()) + coord_flip()
+
+h1
+#scale_x_discrete (limit = rev) (this line needs to be added in if no coord_flip())
+
+```
+<br>
+
+Above **Figure 1** shows:
+
+- out of 990 YouTubers, over 300 accounts are originated from US. 
+
+It has proven the popularity, and success of YouTubers from it foundation country. 
+
+
+<br>
+
+#### **2.2 Which year were these Youtube channels created? Do many of them created fairly early? As they may accumulate more subscribers over the years? **  
+
+<br>
+```{r warning=FALSE,out.width= "100%"}
+
+new_df_3$continent <- countrycode(sourcevar = new_df_3$Country, origin = "country.name", destination = "continent")
+
+h3 <- new_df_3 %>% mutate ( topyear = if_else ( year(created_date_1) == 2014, "2014", "others" )) %>% ggplot ( aes(year(created_date_1), fill = topyear) ) + geom_bar (alpha=0.9) +
+  scale_fill_manual( values = c( "2014"="#F2AD00", "others"="#045D5D" ) )+  labs(title = "Barplot: No.YouTuber Accounts Created in Each Year", x = "Year", y = "Count of youtubers",caption = "Fig 2.1")  +  theme(legend.position =  c(0.9, 0.9), legend.key.size = unit(0.5, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(), legend.text =element_text(size=7),legend.background = element_rect(fill = NA), plot.title = element_text(size=9, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) 
+
+h4 <- ggplot (new_df_3, aes ( x = year(created_date_1), y = log(subscribers))) + geom_hex ( binwidth =c(1, 0.13)) +labs(title = "Hexbin: log(No.subscribers) and Account Created Year", x = "created_year", y = "log($subscriber)",caption = "Fig 2.2")   +theme(legend.position = c(0.9, 0.85), legend.key.size = unit(0.5, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_text(size=8), legend.text =element_text(size=7),legend.background = element_rect(fill = NA), plot.title=element_text(size=9,face="bold"),axis.text=element_text(size=8),axis.title=element_blank()) + scale_fill_gradientn(colours = c("#033E3E","#00A08A", "#F2AD00"))
+
+grid.arrange (h3,h4, ncol = 2)
+```
+
+The above **Figure 2.1** shows:
+
+- out of top 990 YouTubers, nearly 100 accounts got created in **<span style="color: #F2AD00;">Year: 2014. (Yellow Bar)</span>**
+
+- This is different to our assumptions above. Many accounts that were created in 2014, are able to gain the most number of spots in the top 990 ranks. 
+
+However this is just a **count** figure. 
+
+- What is the **distribution of the numbers of subscribers**, over the **created year**?
+
+<br>
+
+The above **Figure 2.2** Hexbin graph shows:
+
+- the distribution, and relationship between created year and number of subscribers.
+
+- The **<span style="color: #F2AD00;">yellow tile</span>** in the middle tells the same story with **Figure 2.1**, that many accounts were created in 2014.
+
+- However, on the Y axis regarding the number of subscribers (log transformed), these accounts that were created in 2014, are having relatively **low numbers of subscribers**. The real gap between yellow tile and the highest blue tile would be much greater in data's original measurement unit.
+
+- Interestingly to see, lots of super high number of subscribers account were actually created quite early, around **Year: 2005**. 
+
+<br>
+
+#### **2.3 In order to further investigate above observations, below 4 paired plots were generated. To show the raw numbers of subscribers and video views, over the account created year. **
+
+<br>
+
+```{r,out.width= "100%"}
+P_1<- new_df_3 %>% mutate ( topyear = if_else ( year(created_date_1) == 2006, "2006", "others" )) %>% ggplot() +
+  geom_bar(aes(x=year(created_date_1), y=subscribers,fill = topyear), stat="identity", alpha=1)  +
+  scale_fill_manual( values = c( "2006"="#F2AD00", "others"="#00A08A" ) )+  labs(title = "No. of Subscribers vs Year (Total)",caption = "Fig 3.1") +  theme(legend.position =  c(0.3, 0.93), legend.key.size = unit(0.5, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(),legend.background = element_rect(fill = NA), legend.text =element_text(size=7),
+    plot.title = element_text(size=9, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) 
+
+P_2<- new_df_3 %>% mutate ( topyear = if_else ( year(created_date_1) == 2016, "2016", "others" )) %>% ggplot() +
+  geom_bar(aes(x=year(created_date_1), y=subscribers_for_last_30_days,fill = topyear), stat="identity", alpha=1)  +
+  scale_fill_manual( values = c( "2016"="#F2AD00", "others"="#00A08A" ) )+  labs(title = "(The last 30 days only)",caption = "Fig 3.2") +  theme(legend.position =  c(0.8, 0.93), legend.key.size = unit(0.5, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(),legend.background = element_rect(fill = NA), legend.text =element_text(size=7), 
+    plot.title = element_text(size=9, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) 
+
+
+
+
+P_3<- new_df_3 %>% mutate ( topyear = if_else ( year(created_date_1) == 2006, "2006", "others" )) %>% ggplot() +
+  geom_bar(aes(x=year(created_date_1), y=video_views,fill = topyear), stat="identity", alpha=1)  +
+  scale_fill_manual( values = c( "2006"="#F2AD00", "others"="#3B9AB2" ) )+  labs(title = "No. of Views vs Year (Total)",caption = "Fig 3.3") +  theme(legend.position =  c(0.3, 0.93), legend.key.size = unit(0.5, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(),legend.background = element_rect(fill = NA), legend.text =element_text(size=7),
+    plot.title = element_text(size=9, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) 
+
+P_4<- new_df_3 %>% mutate ( topyear = if_else ( year(created_date_1) == 2016, "2016", "others" )) %>% ggplot() +
+  geom_bar(aes(x=year(created_date_1), y=video_views_for_the_last_30_days,fill = topyear), stat="identity", alpha=1)  +
+  scale_fill_manual( values = c( "2016"="#F2AD00", "others"="#3B9AB2" ) )+  labs(title = "(The last 30 days only)",caption = "Fig 3.4") +  theme(legend.position =  c(0.8, 0.93), legend.key.size = unit(0.5, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(),legend.background = element_rect(fill = NA), legend.text =element_text(size=7), 
+    plot.title = element_text(size=9, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) 
+
+
+
+
+
+grid.arrange (P_1,P_2,P_3,P_4, ncol = 2)
+```
+
+**Fig 3.1 and Fig 3.3** shows : 
+
+- the accounts created in **<span style="color: #F2AD00;">2006 (Yellow Bar)</span>**, have gained the most number of total subscribers, and video views. 
+
+- Why 2006 ? As that was the year when YouTube become extreme popular around the world. 
+https://www.officetimeline.com/blog/youtube-history-timeline
+
+<br>
+
+**Fig 3.2 and Fig 3.4** reveals:
+
+- The number of new subscribers and video views in the last 30 days, respectively. 
+
+- The accounts created in **<span style="color: #F2AD00;">2016 (Yellow Bar)</span>**, actually taking the lead in both new subscribers and video views. 
+
+- Potentially in a few years, these accounts will overtake the accounts created in 2006, becoming the most popular YouTube channels.
+
+<br>
+
+#### **2.4 Quite often people would wonder: which category of the videos on the YouTube is the most popular? I personally watch many of travel blogs.**
+
+<br>
+
+
+```{r echo=FALSE}
+
+#This code block is copied from https://waterdata.usgs.gov/blog/boxplots/
+  
+ggplot_box_legend <- function(family = "serif"){
+
+  # Create data to use in the boxplot legend:
+  set.seed(100)
+
+  sample_df <- data.frame(parameter = "test",
+                        values = sample(500))
+
+  # Extend the top whisker a bit:
+  sample_df$values[1:100] <- 701:800
+  # Make sure there's only 1 lower outlier:
+  sample_df$values[1] <- -350
+
+  # Function to calculate important values:
+  ggplot2_boxplot <- function(x){
+
+    quartiles <- as.numeric(quantile(x,
+                                     probs = c(0.25, 0.5, 0.75)))
+
+    names(quartiles) <- c("25th percentile",
+                          "50th percentile\n(median)",
+                          "75th percentile")
+
+    IQR <- diff(quartiles[c(1,3)])
+
+    upper_whisker <- max(x[x < (quartiles[3] + 1.5 * IQR)])
+    lower_whisker <- min(x[x > (quartiles[1] - 1.5 * IQR)])
+
+    upper_dots <- x[x > (quartiles[3] + 1.5*IQR)]
+    lower_dots <- x[x < (quartiles[1] - 1.5*IQR)]
+
+    return(list("quartiles" = quartiles,
+                "25th percentile" = as.numeric(quartiles[1]),
+                "50th percentile\n(median)" = as.numeric(quartiles[2]),
+                "75th percentile" = as.numeric(quartiles[3]),
+                "IQR" = IQR,
+                "upper_whisker" = upper_whisker,
+                "lower_whisker" = lower_whisker,
+                "upper_dots" = upper_dots,
+                "lower_dots" = lower_dots))
+  }
+
+  # Get those values:
+  ggplot_output <- ggplot2_boxplot(sample_df$values)
+
+  # Lots of text in the legend, make it smaller and consistent font:
+  update_geom_defaults("text",
+                     list(size = 3,
+                          hjust = 0,
+                          family = family))
+  # Labels don't inherit text:
+  update_geom_defaults("label",
+                     list(size = 3,
+                          hjust = 0,
+                          family = family))
+
+  # Create the legend:
+  # The main elements of the plot (the boxplot, error bars, and count)
+  # are the easy part.
+  # The text describing each of those takes a lot of fiddling to
+  # get the location and style just right:
+  explain_plot <- ggplot() +
+    stat_boxplot(data = sample_df,
+                 aes(x = parameter, y=values),
+                 geom ='errorbar', width = 0.3) +
+    geom_boxplot(data = sample_df,
+                 aes(x = parameter, y=values),
+                 width = 0.3, fill = "lightgrey") +
+    theme_minimal(base_size = 5, base_family = family) +
+    geom_segment(aes(x = 2.3, xend = 2.3,
+                     y = ggplot_output[["25th percentile"]],
+                     yend = ggplot_output[["75th percentile"]])) +
+    geom_segment(aes(x = 1.2, xend = 2.3,
+                     y = ggplot_output[["25th percentile"]],
+                     yend = ggplot_output[["25th percentile"]])) +
+    geom_segment(aes(x = 1.2, xend = 2.3,
+                     y = ggplot_output[["75th percentile"]],
+                     yend = ggplot_output[["75th percentile"]])) +
+    geom_text(aes(x = 2.4, y = ggplot_output[["50th percentile\n(median)"]]),
+              label = "Interquartile\nrange", fontface = "bold",
+              vjust = 0.4) +
+    geom_text(aes(x = c(1.17,1.17),
+                  y = c(ggplot_output[["upper_whisker"]],
+                        ggplot_output[["lower_whisker"]]),
+                  label = c("Largest value within 1.5 times\ninterquartile range above\n75th percentile",
+                            "Smallest value within 1.5 times\ninterquartile range below\n25th percentile")),
+                  fontface = "bold", vjust = 0.9) +
+    geom_text(aes(x = c(1.17),
+                  y =  ggplot_output[["lower_dots"]],
+                  label = "Outside value"),
+              vjust = 0.5, fontface = "bold") +
+    geom_text(aes(x = c(1.9),
+                  y =  ggplot_output[["lower_dots"]],
+                  label = "-Value is >1.5 times and"),
+              vjust = 0.5) +
+    geom_text(aes(x = 1.17,
+                  y = ggplot_output[["lower_dots"]],
+                  label = "<3 times the interquartile range\nbeyond either end of the box"),
+              vjust = 1.5) +
+    geom_label(aes(x = 1.17, y = ggplot_output[["quartiles"]],
+                  label = names(ggplot_output[["quartiles"]])),
+              vjust = c(0.4,0.85,0.4),
+              fill = "white", label.size = 0) +
+    ylab("") + xlab("") +
+    theme(axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          panel.grid = element_blank(),
+          aspect.ratio = 4/3,
+          plot.title = element_text(hjust = 0.5, size = 10)) +
+    coord_cartesian(xlim = c(1.4,3.1), ylim = c(-600, 900)) +
+    labs(title = "Boxplot Legend")
+
+  return(explain_plot)
+
+}
+
+legend_plot <- ggplot_box_legend()
+
+```
+
+
+
+```{r,out.width= "100%"}
+
+
+
+B1 <- ggplot(data = new_df_3, aes(x = category, y = log(subscribers))) +
+  geom_boxplot(color="midnightblue",
+        fill="#00A08A",
+        alpha=0.8, outlier.colour="#F98400",
+        outlier.fill="#F98400",
+        outlier.size=1)  + 
+  labs(title = "Channel Categories vs Log (Subscribers)",caption = "Fig 4") +  theme(legend.position = "none", 
+    plot.title = element_text(size=9, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) +
+  coord_flip() 
+
+
+
+
+grid.arrange(arrangeGrob (B1, ncol = 1, nrow =1 ), arrangeGrob (legend_plot, ncol=1, nrow = 1), widths = c(1.3,1))
+
+
+```
+
+<br>
+
+The above **Fig 4** shows: 
+
+- the log transformed of the subscribers by each category
+
+- Category **"Trailers"**, has the highest median in the number of subscribers
+
+- Category **"Travel & Events"** has the lowest median. (Big surprise to me !)
+
+- Category **"shows"** has the largest IQR.
+
+- Categroy **"Music"**, the first <span style="color: #F98400;">first orange dot</span> from the right, is reprsenting the No.1 ranked YouTuber in our data. It is located very far from the 75 percentile, even after the log transformation !
+
+- Again, if the data are randomly sampled, this would be consider as an outlier and would need to be removed from the dataset, as it will heavily impact modeling.  
+
+<br>
+
+<span style="color: red;">Disclaimer:</span>
+
+- The code to create the boxplot legend in **Fig.4** above, was not produced by me, and is copied from : https://waterdata.usgs.gov/blog/boxplots/. 
+
+- The code block was not shown in this .HTML document (can be found in .Rmd file).
+
+- Due to the reason that the box plot always cause many confusions in various audiences.By using this useful box plot explanation legend, would help the audience to understand the box plot better. 
+
+<br>
+
+```{r,out.width= "100%"}
+
+
+
+B2 <- ggplot(data = new_df_3, aes(x = category, y = subscribers)) +
+  geom_boxplot(color="midnightblue",
+        fill="#00A08A",
+        alpha=0.8, outlier.colour="#F98400",
+        outlier.fill="#F98400",
+        outlier.size=1) +
+  labs(title = "Channel Categories vs Subscribers",caption = "Fig 5") +  theme(legend.position = "none", 
+    plot.title = element_text(size=11, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank()) + 
+  coord_flip() 
+
+B2
+
+
+```
+<br>
+
+Above **Fig 5** demonstrates:
+
+- the subscribers in original data scales without the log transformation.
+
+- As we can see the top 1 YouTuber in our rank, its subscribers numbers is by far leading the chart, with a whopping 248 Million subscribers !!
+
+- Because of this one Youtuber with 248M subscribers, if we sum all the subscribers by category, will the **category: Music** lead the chart? Even the **category: Music** has lower 25, 50, 75 Percentile figures than **category: shows** ?
+
+<br>
+
+#### **2.5 Further data visualization to answer above questions. and drill each category down with extra country information. **
+
+<br>
+
+```{r}
+
+bar_plot_2 <-  ggplot(data = new_df_3) + geom_bar (aes(x = reorder(category, subscribers, FUN = sum), y = subscribers, fill = continent), stat = "identity")  + coord_flip() +  scale_fill_manual(values= wes_palette("Darjeeling1", n = 5)) + labs(title = "Channel Categories vs Total of Subscribers, by Continent",caption = "Fig 6") +  theme(legend.position = c(0.7, 0.2),legend.direction = "horizontal", legend.key.size = unit(1, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(1, 'cm'), legend.title = element_text(size=8), legend.text =element_text(size=7),plot.title = element_text(size=11, face = "bold"),axis.text=element_text(size=8),axis.title=element_blank())
+bar_plot_2
+```
+<br>
+
+Above **Fig 6** describes :  
+
+- A continent column was created during early ETL process, based on the country, by using a package called "countrycode". 
+In order to better visualize the data, rather than having 50 countries stacked in each category as sub categories.
+
+- The question 2.5 has been validated, **category: music** is still taking the lead, by having the most numbers of subscribers. 
+
+- It is really surprising to see it again, that the *category: travel** is the least popular group.
+
+- **<span style="color: #00A08A;">American</span>** and **<span style="color: #F2AD00;">Asia</span>** are the two main continents where top 990 accounts were originated. 
+
+- Majority of the YouTubers in the **category: shows** and **category: news/politics**, were originated from **<span style="color: #F2AD00;">Asia</span>**.
+
+<br>
+
+#### **2.6 What are the relationship between subscribers and video views? also subscribers and highest yearly earnings?**
+
+<br>
+
+```{r message=FALSE, warning=FALSE}
+
+
+D1 <- ggplot(new_df_3, aes(new_df_3$subscribers, new_df_3$video_views)) + geom_density_2d_filled(linewidth = 0.2, colour = "white", bins = 8)  + coord_cartesian(xlim =c(min(new_df_3$subscribers), 30000000), ylim = c(min(new_df_3$video_views), 20000000000)) + geom_smooth() +   xlab("Subscribers") + ylab("Video.Vies")+ theme(panel.background = element_rect(fill = NA),legend.position = c(0.87, 0.18), panel.grid.major = element_blank(),legend.key.size = unit(1, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(), legend.text =element_text(size=6),
+    plot.title = element_text(size=11, face = "bold"),axis.text=element_text(size=8),axis.title=element_text(size=8),legend.background = element_rect(fill = NA))+ scale_fill_manual(values = rev(wes_palette(8, name = "Darjeeling1", type = "continuous")), name = "") 
+
+
+
+D2 <- ggplot(new_df_3, aes(new_df_3$subscribers, new_df_3$video_views))+ geom_point(aes(colour = factor(new_df_3$continent)), alpha = 0.8) + coord_cartesian(xlim =c(min(new_df_3$subscribers), 50000000), ylim = c(min(new_df_3$video_views), 40000000000))+ geom_smooth()    +
+  xlab("Subscribers") + ylab("Video.Vies")+ 
+  theme(panel.background = element_rect(fill = "#003333"),panel.grid.major = element_blank(),panel.grid.minor = element_line(colour = "black"),legend.position = c(0.17, 0.9), legend.key = element_rect(fill = NA),legend.key.size = unit(1, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(), legend.text =element_text(size=7, color = "white"),
+    plot.title = element_text(size=11, face = "bold"),axis.text=element_text(size=8),axis.title=element_text(size=8),legend.background = element_rect(fill = NA)) + scale_color_manual(values= wes_palette("Darjeeling1", n = 5))
+
+
+grid.arrange(arrangeGrob (D1, ncol = 1, nrow =1 ), arrangeGrob (D2, ncol=1, nrow = 1), widths = c(1,1.1),top = "**Fig 7. Video.Views - Subscirbers (2D filled density plot, Scatter Plot**")
+```
+
+```{r message=FALSE}
+
+
+D3<- ggplot(new_df_3, aes(new_df_3$subscribers, new_df_3$highest_yearly_earnings)) + geom_density_2d_filled(linewidth = 0.2, colour = "white", bins = 8) +  coord_cartesian(xlim =c(min(new_df_3$subscribers), 30000000), ylim = c(min(new_df_3$highest_yearly_earnings), 10000000)) + geom_smooth()  +   xlab("Subscribers") + ylab("highest_yearly_earnings")+
+   theme(panel.background = element_rect(fill = NA),legend.position = c(0.85, 0.22), panel.grid.major = element_blank(),legend.key.size = unit(1, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(), legend.text =element_text(size=6),
+    plot.title = element_text(size=11, face = "bold"),axis.text=element_text(size=8),axis.title=element_text(size=8),legend.background = element_rect(fill = NA))+ scale_fill_manual(values = rev(wes_palette(8, name = "Darjeeling1", type = "continuous")), name = "")
+
+
+
+D4 <- ggplot(new_df_3, aes(new_df_3$subscribers, new_df_3$highest_yearly_earnings))+ geom_point(aes(colour = factor(new_df_3$continent)), alpha = 0.8) + geom_smooth() + coord_cartesian(xlim =c(13000000,50000000), ylim = c(0, 25000000)) +
+  xlab("Subscribers") + ylab("highest_yearly_earnings")+
+  theme(panel.background = element_rect(fill = "#003333"),panel.grid.major = element_blank(),panel.grid.minor = element_line(colour = "black"),legend.position = c(0.87, 0.9), legend.key = element_rect(fill = NA),legend.key.size = unit(1, 'cm'), legend.key.height = unit(0.3, 'cm'), legend.key.width = unit(0.3, 'cm'), legend.title = element_blank(), legend.text =element_text(size=7, color = "white"),
+    plot.title = element_text(size=11, face = "bold"),axis.text=element_text(size=8),axis.title=element_text(size=8),legend.background = element_rect(fill = NA)) + scale_color_manual(values= wes_palette("Darjeeling1", n = 5))
+
+
+
+
+grid.arrange(arrangeGrob (D3, ncol = 1, nrow =1 ), arrangeGrob (D4, ncol=1, nrow = 1), widths = c(1.2,1),top = "** Fig 8. Highest Year Earnings - Subscirbers (2D filled density plot, Scatter Plot)")
+```
+
+In order to explore relationship between numeric variables, **Fig.7** and **Fig.8** were produced: 
+
+**Fig.7** : the relationship between subscribers and video.views.
+
+**Fig.8** : the relationship between subscribers and highest yearly earnings.
+
+
+- The original measurement scales were used, to represent the data more realistically.
+
+- The 2d filled density plots is slightly zoomed in, to better visualize the over plotting area in the respective scatter plot.
+
+- Bins were set to 8 in both density plots, the majority of the data points are concentrated in the lower end of scale.
+
+- Majority of the Youtubers in our dataset have less than 20 million subscribers, with less than 10 billion total video views.
+
+- Majority of their highest yearly income are in a range of 0, to 5 million ! 
+
+- As expected, there are positive relationship between subscribers and video_views, as well as the subscribers and highest yearly earning. 
+
+- One lucky YouTuber has made a maximum of 163 million yearly income! (*Currency could be USD but yet to be confirmed)
+
+
+<br>
+
+#### **2.7. Followed by previous observations, it would be meaningful to investigate the correlation between multiple different variables.**
+
+<br>
+
+```{r}
+numeric_subset <- new_df_3[, which(names(new_df_3) %in% c("rank","subscribers","video_views","video_views_rank","country_rank","channel_type_rank","lowest_monthly_earnings","lowest_yearly_earnings","highest_monthly_earnings","highest_yearly_earnings"))]
+
+```
+
+```{r,out.width= "100%"}
+
+
+
+M_1 <- cor(numeric_subset)
+test_Res_1 = cor.mtest(numeric_subset, conf.level = 0.95)
+
+corrplot( M_1, p.mat = test_Res_1$p, method = 'color', tl.col="#003366", col=wes_palette(8, name = "Darjeeling1", type = "continuous"),  type = 'upper', insig='pch', addCoef.col ='black', tl.cex=0.55, number.cex = 0.6,number.font = 2, order = 'hclust',diag=TRUE)
+
+
+```
+
+<br>
+
+**Correlation Map :**
+
+- The positive, or negative correlation are indicated by different colors in 8 groups, ranging from -1 to 1, with the correlation coefficient listed. 
+
+- 95 percent of significance level is used for the P value, the $\times$ indicates the correlation is not significant.
+
+- As expected, the **subscribers** and **video_views** shows a strong positive correlation .
+
+- In terms of earnings, all earning related columns shows strong positive correlations between each others.
+
+- Both **country_rank** with **video_views_rank**, and **channel_type_rank** with **video_views_rank**, are positively strong correlated. 
+
+<br>
+
+
+<br>
+
+### **3. Conclusion and Acknowledgement**
+
+<br>
+
+Through above ELT, EDA processes, even with a small data set, many useful insights, summaries, conclusions can be produced. It is really impressive to see in this modern digital world, how much influences one certain creator can make, and how much these creators can benefit financially by making amazing contents.
+
+<br>
+I would also like to acknowledge many color palettes used in this report (as well as the Shiny App) are inspired by Wes Anderson Movies. It is one of the most important factors to create good plots, visuals that 'speak for itself'. Many interesting plots can be found in :
+
+https://rforpoliticalscience.com/2020/07/26/make-wes-anderson-themed-graphs-with-wesanderson-package-in-r/
+
+![Wes Anderson Color Palettes](Wes_2.jpg)
+
+<br>
+<br>
+<br>
+
+
+```{r eval=FALSE, include=FALSE}
+
+#code to prepare dataset for Shiny App
+new_df_3$created_year <- paste("Yr", as.character(year(new_df_3$created_date_1)))
+
+str(new_df_3)
+
+write.csv(new_df_3,"df_Shiny.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
