@@ -10,6 +10,8 @@ A Shiny App has been built, to allow users visualizing the data interactively.
 # R Shiny App
 ![image](https://github.com/coffeemartin/EDA/assets/73702415/4b221e62-0947-4a3e-8119-e24553a2add1)
 ![image](https://github.com/coffeemartin/EDA/assets/73702415/f6988e62-7799-43f9-926d-4596d25ccf02)
+![image](https://github.com/coffeemartin/EDA/assets/73702415/24e7250a-0849-4813-90a2-2adae0d2e3b0)
+
 
 # Final Report
 ![image](https://github.com/coffeemartin/EDA/assets/73702415/b9c45910-c009-4155-8c6b-0233dc1e057f)
